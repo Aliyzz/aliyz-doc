@@ -2,9 +2,7 @@
 
 ## 一、基本数据类型
 
->在redis中,所有数据类型都被封装在一个redisObject结构中,用于提供统一的接口
-
->Redis有序列表有压缩列表ziplist（内存连续的特殊双向链表）和跳表skiplist两种实现方式，通过encoding识别，当数据项数目小于zset\_max\_ziplist\_entries(默认为128)，且保存的所有元素长度不超过zset\_max\_ziplist\_value(默认为64)时，则用ziplist实现有序集合，否则使用zset结构，zset底层使用skiplist跳表和dict字典。
+>在redis中,所有数据类型都被封装在一个redisObject结构中，用于提供统一的接口
 
 #### String
 
@@ -93,10 +91,10 @@ sadd,spop,smembers,sunion
 	- 好友/关注/粉丝/感兴趣的人集合
 	
 	```
-	a. sinter命令可以获得A和B两个用户的共同好友
-	b. sismember命令可以判断A是否是B的好友
-	c. scard命令可以获取好友数量
-	d. 关注时，smove命令可以将B从A的粉丝集合转移到A的好友集合
+	1.sinter命令可以获得A和B两个用户的共同好友
+	2.sismember命令可以判断A是否是B的好友
+	3.scard命令可以获取好友数量
+	4.关注时，smove命令可以将B从A的粉丝集合转移到A的好友集合
 	
 	需要注意的是，如果你用的是Redis Cluster集群，对于sinter、smove这种操作多个key的命令，要求这两个key必须存储在同一个slot（槽位）中，否则会报出 (error) CROSSSLOT Keys in request don't hash to the same slot 错误。Redis Cluster一共有16384个slot，每个key都是通过哈希算法CRC16(key)获取数值哈希，再模16384来定位slot的。要使得两个key处于同一slot，除了两个key一模一样，还有没有别的方法呢？答案是肯定的，Redis提供了一种Hash Tag的功能，在key中使用{}括起key中的一部分，在进行 CRC16(key) mod 16384 的过程中，只会对{}内的字符串计算，例如friend_set:{123456}和fans_set:{123456}，分别表示用户123456的好友集合和粉丝集合，在定位slot时，只对{}内的123456进行计算，所以这两个集合肯定是在同一个slot内的，当用户123456关注某个粉丝时，就可以通过smove命令将这个粉丝从用户123456的粉丝集合移动到好友集合。相比于通过srem命令先将这个粉丝从粉丝集合中删除，再通过sadd命令将这个粉丝加到好友集合，smove命令的优势是它是原子性的，不会出现这个粉丝从粉丝集合中被删除，却没有加到好友集合的情况。然而，对于通过sinter获取共同好友而言，Hash Tag则无能为力，例如，要用sinter去获取用户123456和456789两个用户的共同好友，除非我们将key定义为{friend_set}:123456和{friend_set}:456789，否则不能保证两个key会处于同一个slot，但是如果真这样做的话，所有用户的好友集合都会堆积在同一个slot中，数据分布会严重不均匀，不可取，所以，在实战中使用Redis Cluster时，sinter这个命令其实是不适合作用于两个不同用户对应的集合的（同理其它操作多个key的命令）。
 	
@@ -111,6 +109,7 @@ sadd,spop,smembers,sunion
 
 >&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;内部使用 `dict字典` 和 `跳跃表(SkipList)` 来保证数据的存储和有序，dict里放的是成员到score的映射，而跳跃表里存放的是所有的成员，排序依据是HashMap里存的score,使用跳跃表的结构可以获得比较高的查找效率，并且在实现上比较简单。
 
+>Redis有序列表有压缩列表ziplist（内存连续的特殊双向链表）和跳表skiplist两种实现方式，通过encoding识别，当数据项数目小于zset\_max\_ziplist\_entries(默认为128)，且保存的所有元素长度不超过zset\_max\_ziplist\_value(默认为64)时，则用ziplist实现有序集合，否则使用zset结构，zset底层使用skiplist跳表和dict字典。
 
 - 常用命令
 
