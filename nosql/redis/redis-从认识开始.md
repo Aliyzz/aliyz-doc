@@ -2,10 +2,9 @@
 
 -----
 
->***"Redis is an open source (BSD licensed), in-memory data structure store, used as a database, cache and message broker."*** —— Redis是一个开放源代码（BSD许可）的内存中数据结构存储，用作数据库，缓存和消息代理。(摘自官网)
-
-
-> 它是一个开源，高级的键值存储和一个适用的解决方案，用于构建高性能，可扩展的 Web 应用程序。Redis 也被作者戏称为 **数据结构服务器** ，这意味着使用者可以通过一些命令，基于带有 TCP 套接字的简单 服务器-客户端 协议来访问一组 可变数据结构 (*在 Redis 中都采用键值对的方式，只不过对应的数据结构不一样罢了*)。
+>***"Redis is an open source (BSD licensed), in-memory data structure store, used as a database, cache and message broker."*** —— Redis是一个开放源代码（BSD许可）的内存中数据结构存储，用作数据库，缓存和消息代理。(摘自官网)<br>
+>
+>它是一个开源，高级的键值存储和一个适用的解决方案，用于构建高性能，可扩展的 Web 应用程序。Redis 也被作者戏称为 **数据结构服务器** ，这意味着使用者可以通过一些命令，基于带有 TCP 套接字的简单 服务器-客户端 协议来访问一组 可变数据结构 (*在 Redis 中都采用键值对的方式，只不过对应的数据结构不一样罢了*)。
 
 
 ## *Why is Redis?*
