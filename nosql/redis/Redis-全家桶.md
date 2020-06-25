@@ -44,7 +44,7 @@
 - 使用场景
 	- 购物车：以用户id为key，商品id为field，商品数量为value
 	- 存储对象(当对象的某个属性需要频繁修改时)：与string类型对象存储的区别
-	![](./images/redis-001.png)
+	![](./resource/redis-001.png)
 
 #### List
 
