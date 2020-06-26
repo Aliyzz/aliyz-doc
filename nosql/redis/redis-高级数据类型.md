@@ -1,175 +1,178 @@
-# Redis 小笔记
+# Redis 高级数据类型
 
-## 一、基本数据类型
+----
 
->在redis中,所有数据类型都被封装在一个redisObject结构中，用于提供统一的接口
 
-#### String
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;最基本数据类型，一个key对应一个value；可以包含任何数据，比如jpg图片或者序列化的对象；一个键最大能存储512MB
+## HyperLogLog
 
-- 常用命令
+#### 问题原形
 
-```python
-1.查询：GET key
-2.新增：SET key value
-3.设置过期：EXPIRE key seconds
-4.删除：DEL key
+>如果要实现这么一个功能：
+>
+>```
+统计 APP或网页 的一个页面 UV（网站独立访客）数。
+>```
+
+#### 当前选择
+
+>1.HashMap：满足去重，操作简单；但是数据量过大内存成问题。<br>
+>2.B+树、Bitmap位图（先不介绍）。<br>
+>3.***HyperLogLog***：下面简称为HLL，它是 LogLog 算法的升级版，作用是能够提供不精确的去重计数。存在以下的特点：
+>>- 代码实现较难；
+>>- 能够使用极少的内存来统计巨量的数据，在 Redis 中，只需要12K内存就能统计2^64个数据（***难点***）；
+>>- 计数存在一定的误差，误差率整体较低，标准误差为 0.81% ；
+>>- 误差可以被设置辅助计算因子进行降低。
+
+#### 理论基础
+
+- **伯努利试验**
+
+>它是数学概率论中的一部分内容，典故来源于抛硬币：<br>
+>
+```markdown
+硬币拥有正反两面，一次的上抛至落下，最终出现正反面的概率都是50%；
+假设一直抛硬币，直到它出现正面为止，`抛掷次数记为：k(i)，i=1,2,3,...,n`，
+我们记录为一次完整的试验；
+这个试验就是 **「伯努利试验」**。
 ```
 
-- 使用场景
-	- 基于token的单点登录
-	- 使用 `INCR` 和 `DECR` 实现分布式计数器
-	- string + json 的对象存储
-	- 分布式锁：基于`setnx`、`expire`、`del`组合实现
+- 计算公式
 
-#### Hash
-
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Hash是一个键值对集合，也叫字典或映射表，`特别适合用于存储对象` 。实际是内部存储的Value为一个HashMap，并提供了直接存取这个Map成员的接口。
-
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;实际这里会有2种不同实现: 1.Hash的成员比较少时Redis为了节省内存会采用类似一维数组的方式来紧凑存储，对应的value redisObject的encoding为zipmap；2.当成员数量增大时会自动转成真正的HashMap,此时encoding为ht。
-
-- 常用命令
+>上述实验中，n 为所进行的试验次数，下面的公式只是近似，Redis的HLL比这个要复杂得多（以后讲解）。
 
 ```python
-1.查询属性：HGET key field
-2.查询全部属性：HGETALL key
-3.新增单个属性：HSET key field value
-4.新增多个属性：HMSET key field1 value1 [field2 value2]
-5.删除属性：HDEL key field1 [field2]
+								n = 2^max(k)
 ```
 
-- 使用场景
-	- 购物车：以用户id为key，商品id为field，商品数量为value
-	- 存储对象(当对象的某个属性需要频繁修改时)：与string类型对象存储的区别
+
+#### 命令使用
+
+```python
+# 添加（多个）元素
+PFADD key [element ...]
+说明：如果key不存在，则新建一个empty HLL；如果HLL内部寄存器发生变化，返回1；否则返回0；
 	
-		|         | STRING + JSON      | HASH  
-		| ------- | :----------------: |  :----:
-		| 效率     | 很高               |  高  
-		| 容量     | 低                 |  低  
-		| 灵活性   | 低                 |  高  
-		| 序列化   | 简单                |  复杂  
-
-#### List
-
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Redis最重要的数据结构之一，双向链表结构，即可以支持反向查找和遍历，更方便操作，不过带来了部分额外的内存开销。
-
-- 常用命令
-
-```python
-1.左阻塞取值（如果列表没有元素会阻塞列表直到等待超时或发现可弹出元素为止，下同）：
-BLPOP key1 [key2] timeout
-2.右阻塞取值：BRPOP key1 [key2] timeout
-3.左/右非阻塞取值（最后一个元素）：LPOP/RPOP key
-4.左/右新增值：LPUSH/RPUSH key value1 [value2]
-5.获取指定范围内的元素：LRANGE key start stop
+# 获取统计值
+PFCOUNT key [key ...]
+说明：
+a.参数是单个key时，如果key存在，返回基数估算值，否则返回0；
+b.参数是多个key，内部将多个HLL merge后，返回基数估算的值
+	
+# 将多个HLL合并存储到另一个HLL，如果目标key不存在，则创建
+PFMERGE destkey sourcekey [sourcekey ...]
 ```
 
-- 使用场景
-	- 消息队列：基于`lpop`和`rpush`（或者反过来，`lpush`和`rpop`）能实现队列的功能。
-	- 排行榜（只适合定时计算排行榜）：`lrange`命令可以分页查看队列中的数据，可将每隔一段时间计算一次的排行榜存储在list类型中，如每日的手机销量排行、学校月考学生的成绩排名等。
-	- 最新列表：`lpush`和`lrange`能实现最新列表的功能，每次通过lpush命令往列表里插入新的元素，然后通过lrange命令读取最新的元素列表，如朋友圈的点赞列表、评论列表。**对于频繁更新的列表不适合**。
 
-***&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;那么问题来了，对于`排行榜`和`最新列表`两种应用场景，list类型能做到的sorted set类型都能做到，list类型做不到的sorted set类型也能做到，那为什么还要使用list类型去实现排行榜或最新列表呢，直接用sorted set类型不是更好吗？原因是sorted set类型占用的内存容量是list类型的`数倍之多`，对于列表数量不多的情况，可以用sorted set类型来实现***
 
-#### Set
+## Bitmaps
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;与List类似，但他支持自动排重，同时也提供了判断某个成员是否在一个set集合内的重要接口。
 
-- 常用命令
+#### 理解位图
 
-```python
-sadd,spop,smembers,sunion
-1.向key中放入元素：SADD key member1 [member2]
-2.移除并返回集合中的一个随机元素：SPOP key
-3.返回集合中的所有成员：SMEMBERS key
-4.返回所有给定集合的并集：SUNION key1 [key2]
-5.返回给定所有集合的差集：SDIFF key1 [key2]
-```
+>现代计算机用二进制（位） 作为信息的基础单位， 1个字节等于8位， 例如“big”字符串是由3个字节组成， 但实际在计算机存储时将其用二进制表示， “big”分别对应的ASCII码分别是98、 105、 103， 对应的二进制分别是01100010、01101001和01100111<br><br>
+>合理地使用位能够有效地提高内存使用率和开发效率，Redis位图应该这么理解：<br>
+>>- Bitmaps本身不是一种数据结构，实际上它就是字符串，但是它可以对字符串的位进行操作；
+>>- Bitmaps单独提供了一套命令， 所以在Redis中使用Bitmaps和使用字符串的方法不太相同。 可以把Bitmaps想象成一个以位为单位的数组， 数组的每个单元只能存储0和1， 数组的下标在Bitmaps中叫做 **偏移量（offset）**；
+>>- Bitmaps的**最大优势是节省存储空间**。例如，在一个以自增id代表不同用户的系统中，我们只需要512MB空间就可以记录40亿用户的某个单一信息（比如，用户是否希望接收新闻邮件）。
 
-- 使用场景
-	- 好友/关注/粉丝/感兴趣的人集合
-	
-	```
-	1.sinter命令可以获得A和B两个用户的共同好友
-	2.sismember命令可以判断A是否是B的好友
-	3.scard命令可以获取好友数量
-	4.关注时，smove命令可以将B从A的粉丝集合转移到A的好友集合
-	
-	需要注意的是，如果你用的是Redis Cluster集群，对于sinter、smove这种操作多个key的命令，要求这两个key必须存储在同一个slot（槽位）中，否则会报出 (error) CROSSSLOT Keys in request don't hash to the same slot 错误。Redis Cluster一共有16384个slot，每个key都是通过哈希算法CRC16(key)获取数值哈希，再模16384来定位slot的。要使得两个key处于同一slot，除了两个key一模一样，还有没有别的方法呢？答案是肯定的，Redis提供了一种Hash Tag的功能，在key中使用{}括起key中的一部分，在进行 CRC16(key) mod 16384 的过程中，只会对{}内的字符串计算，例如friend_set:{123456}和fans_set:{123456}，分别表示用户123456的好友集合和粉丝集合，在定位slot时，只对{}内的123456进行计算，所以这两个集合肯定是在同一个slot内的，当用户123456关注某个粉丝时，就可以通过smove命令将这个粉丝从用户123456的粉丝集合移动到好友集合。相比于通过srem命令先将这个粉丝从粉丝集合中删除，再通过sadd命令将这个粉丝加到好友集合，smove命令的优势是它是原子性的，不会出现这个粉丝从粉丝集合中被删除，却没有加到好友集合的情况。然而，对于通过sinter获取共同好友而言，Hash Tag则无能为力，例如，要用sinter去获取用户123456和456789两个用户的共同好友，除非我们将key定义为{friend_set}:123456和{friend_set}:456789，否则不能保证两个key会处于同一个slot，但是如果真这样做的话，所有用户的好友集合都会堆积在同一个slot中，数据分布会严重不均匀，不可取，所以，在实战中使用Redis Cluster时，sinter这个命令其实是不适合作用于两个不同用户对应的集合的（同理其它操作多个key的命令）。
-	
-	```
-
-	- 随机展示：如首页随机展示等，基于`srandmember`命令则可以从中随机获取几个。
-	- 黑名单/白名单：如用户黑名单、ip黑名单、设备黑名单等，`sismember`命令可用于判断用户、ip、设备是否处于黑名单之中。
-
-#### SortedSet
-
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Set不是自动有序的，而sorted set可以通过用户额外提供一个优先级(score)的参数来为成员实现自动排序。
-
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;内部使用 `dict字典` 和 `跳跃表(SkipList)` 来保证数据的存储和有序，dict里放的是成员到score的映射，而跳跃表里存放的是所有的成员，排序依据是HashMap里存的score,使用跳跃表的结构可以获得比较高的查找效率，并且在实现上比较简单。
-
->Redis有序列表有压缩列表ziplist（内存连续的特殊双向链表）和跳表skiplist两种实现方式，通过encoding识别，当数据项数目小于zset\_max\_ziplist\_entries(默认为128)，且保存的所有元素长度不超过zset\_max\_ziplist\_value(默认为64)时，则用ziplist实现有序集合，否则使用zset结构，zset底层使用skiplist跳表和dict字典。
-
-- 常用命令
+#### 命令使用
 
 ```python
-1.向有序集合添加一个或多个成员，或者更新已存在成员的分数：ZADD key score1 member1 [score2 member2]
-2.获取有序集合的成员数：ZCARD key
-3.通过索引区间返回有序集合指定区间内的成员：ZRANGE key start stop [WITHSCORES]
-4.移除有序集合中的一个或多个成员：ZREM key member [member ...]
-5.返回有序集合中指定成员的索引：ZRANK key member
+# 设置值
+SETBIT key offset value
+
+# 获取值
+GETBIT key offset
 ```
 
-- 使用场景
-	- 排行榜：如游戏排名、微博热点话题等。
-	- 构造延迟队列
-	- 最新列表
+#### 使用场景
+
+- 各种实时分析(Real time analytics of all kinds)；
+- 存储与对象ID关联的布尔信息，要求高效且高性能(Storing space efficient but high performance boolean information associated with object IDs.)；
+- 布隆过滤器。
 
 
-## 二、高级数据类型
 
-#### HyperLogLog
+## Pub/Sub
 
-#### Geo
+>发布/订阅模式，它是一种消息传递的模式；它包含两种角色，分别是 ***发布者*** 和 ***订阅者*** 。订阅者可以订阅 **一个或者多个频道(channel)**，而发布者可以向指定的频道(channel)发送消息，所有订阅此频道的订阅者都会收到此消息。
 
-#### Pub/Sub
+#### 普通的发布/订阅
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;字面上理解就是发布（Publish）与订阅（Subscribe），在Redis中，你可以设定对某一个key值进行消息发布及消息订阅，当一个key值上进行了消息发布后，所有订阅它的客户端都会收到相应的消息。
+- 命令使用
 
-- 使用方式
+```python
+# 发布消息
+PUBLISH channel message
+
+# 订阅（多个频道）消息
+SUBSCRIBE channel [channel ...]
+说明：
+1、订阅者不会收到订阅之前就发布到该频道的消息
+
+# 按照规则订阅消息
+PSUBSCRIBE pattern [pattern ...]
+说明：
+1、规则支持通配符格式，通配符中 ? 表示1个占位符，* 表示任意个占位符(包括0)，?* 表示1个以上占位符
+
+# 退订指定的频道
+UNSUBSCRIBE channel [channel ...]
+
+# 退订指定的规则
+PUNSUBSCRIBE [pattern [pattern ...]]
+说明：
+1、如果没有参数则会退订所有规则
+```
+
+>使用punsubscribe只能退订通过psubscribe命令订阅的规则，不会影响直接通过subscribe命令订阅的频道；同样unsubscribe命令也不会影响通过psubscribe命令订阅的规则<br>
+>
+>另外需要注意punsubscribe命令退订某个规则时不会将其中的通配符展开，而是进行***严格的字符串匹配***，所以punsubscribe \* 无法退订c\*规则，而是必须使用punsubscribe c\*才可以退订。
+
 
 - 使用场景
 
 	- 用作实时消息系统，比如普通的即时聊天，群聊等功能；
 
 	
-#### Transactions
+## Transactions
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;虽然Redis的Transactions提供的并不是严格的ACID的事务（比如一串用EXEC提交执行的命令，在执行中服务器宕机，那么会有一部分命令执行了，剩下的没执行），但是这个Transactions还是提供了基本的命令打包执行的功能（在服务器不出问题的情况下，可以保证一连串的命令是顺序在一起执行的，中间有会有其它客户端命令插进来执行）。Redis还提供了一个Watch功能，你可以对一个key进行Watch，然后再执行Transactions，在这过程中，如果这个Watched的值进行了修改，那么这个Transactions会发现并拒绝执行。
+>**是什么**： 可以一次执行多个命令，本质是一组命令的集合。一个事务中的所有命令都会序列化，按顺序串行化的执行而不会被其他命令插入。可以理解为一个打包的批量执行脚本，但批量指令并非原子化的操作，中间某条指令的失败不会导致前面已做指令的回滚，也不会造成后续的指令不做。
+>
+>**能干嘛**： 一个*队列中*，**一次性**、**顺序性**、**排他性**的执行一系列命令 (要和pipeline区分开)。
+>
+>**特点**：单个 Redis ***命令的执行是原子性的***，但 Redis 没有在事务上增加任何维持原子性的机制，所以 Redis ***事务的执行并不是原子性的***。
+
+#### 事物过程
+
+- 开始事务
+- 命令入队
+- 执行事务
+
+#### 重要保证
+
+- 批量操作在发送 EXEC 命令前被放入队列缓存。
+- 收到 EXEC 命令后进入事务执行，事务中任意命令执行失败，其余的命令依然被执行。
+- 在事务执行过程，其他客户端提交的命令请求不会插入到事务执行命令序列中。
+
+#### 命令使用
+
+```python
+# 开始事务
+MULTI
+
+# 触发事务
+EXEC
+
+# 取消事务
+DISCARD
+
+# 监视一个(或多个) key ，如果在事务执行之前这个(或这些) key 被其他命令所改动，那么事务将被打断
+WATCH key [key ...]
+
+# 取消 WATCH 命令对所有 key 的监视
+UNWATCH
+```
 
 
-## 三、缓存问题
-
-
-## 四、单线程&高并发
-
-
-
-## 五、淘汰&过期
-
-## 七、持久化
-
-## 八、哨兵&集群&分片
-
-
-## 九、应用设计
-
-### 分布式锁
-
-### 消息队列
-
-
-### 延迟队列
-
-### 
+## Geo（以后补充）
