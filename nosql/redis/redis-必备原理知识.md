@@ -52,7 +52,6 @@
 https://www.jianshu.com/p/603de8774734
 
 > Redis的I/O多路复用模块的功能都是封装了操作系统提供的 select、epoll、evport、kqueue 这些基础函数。向上层提供了一个统一的接口,屏蔽了底层实现的细节。每个I/O多路复用函数库在Redis源码中都对应一个单独的文件。
-
 > 
 > 事件 <br>
 >> **文件事件**：基于Reactor模式开发，Redis服务器通过监听Socket产生的文件事件并处理这些事件实现对客户端的响应。<br>
