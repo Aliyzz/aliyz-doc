@@ -67,4 +67,5 @@
 
 > Stream是Redis 5.0引入的一种新数据类型，允许消费者等待生产者发送的新数据，还引入了消费者组概念，组之间数据是相同的（前提是设置的偏移量一样），组内的消费者不会拿到相同数据。这种概念和kafka很雷同。（***以后补充***）
 > 
-> https://my.oschina.net/u/3049601/blog/1822884
+> - https://my.oschina.net/u/3049601/blog/1822884 
+> - https://www.jianshu.com/p/d32b16f12f09

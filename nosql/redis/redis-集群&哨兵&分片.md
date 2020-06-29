@@ -1,175 +1,134 @@
-# Redis 小笔记
+# Redis 集群&哨兵&分片
 
-## 一、基本数据类型
+-----
 
->在redis中,所有数据类型都被封装在一个redisObject结构中，用于提供统一的接口
+> 详细参考：`https://www.cnblogs.com/huangfuyuan/p/9880379.html`
 
-#### String
+## Redis 分区（分片）
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;最基本数据类型，一个key对应一个value；可以包含任何数据，比如jpg图片或者序列化的对象；一个键最大能存储512MB
+- 概念
 
-- 常用命令
+> 分区是分割数据到多个Redis实例的处理过程，因此每个实例只保存key的一个子集。
 
-```python
-1.查询：GET key
-2.新增：SET key value
-3.设置过期：EXPIRE key seconds
-4.删除：DEL key
-```
+- 优势
 
-- 使用场景
-	- 基于token的单点登录
-	- 使用 `INCR` 和 `DECR` 实现分布式计数器
-	- string + json 的对象存储
-	- 分布式锁：基于`setnx`、`expire`、`del`组合实现
+> 扩展存储空间 ***`内存`***、扩展计算能力 ***`CPU`***、扩展网络带宽 ***`IO`***。
 
-#### Hash
+- 不足
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Hash是一个键值对集合，也叫字典或映射表，`特别适合用于存储对象` 。实际是内部存储的Value为一个HashMap，并提供了直接存取这个Map成员的接口。
+> 多key的操作通常不被支持，如：交集操作； <br>
+> 多key的Redis事务不能使用； <br>
+> 数据处理较为复杂，如：RDB/AOF； <br>
+> 客户端、代理等实现分区架构，增加或删除容量也比较复杂。
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;实际这里会有2种不同实现: 1.Hash的成员比较少时Redis为了节省内存会采用类似一维数组的方式来紧凑存储，对应的value redisObject的encoding为zipmap；2.当成员数量增大时会自动转成真正的HashMap,此时encoding为ht。
+- 类型
 
-- 常用命令
+> ***范围分区***：映射一定范围的对象到特定的Redis实例；但需要维护要一个区间范围到实例的映射表。
+> 
+> ***哈希分区***：将 key 进行HASH运算（取模等），确定对象到特定的Redis实例。
 
-```python
-1.查询属性：HGET key field
-2.查询全部属性：HGETALL key
-3.新增单个属性：HSET key field value
-4.新增多个属性：HMSET key field1 value1 [field2 value2]
-5.删除属性：HDEL key field1 [field2]
-```
+## Redis cluster
 
-- 使用场景
-	- 购物车：以用户id为key，商品id为field，商品数量为value
-	- 存储对象(当对象的某个属性需要频繁修改时)：与string类型对象存储的区别
-	
-		|         | STRING + JSON      | HASH  
-		| ------- | :----------------: |  :----:
-		| 效率     | 很高               |  高  
-		| 容量     | 低                 |  低  
-		| 灵活性   | 低                 |  高  
-		| 序列化   | 简单                |  复杂  
+- 概念
 
-#### List
+> 是Redis的分布式解决方案，能`自动分片`、`内置的高可用支持`、`支撑多 master 多 slave组合`、`自动选主`等。
+> 
+> 适合 `海量数据+高并发+高可用` 的场景
+> 
+> 默认情况下，redis cluster 的核心的理念，主要是用 slave 做高可用的，每个 master 挂一两个 slave，主要是做数据的热备，还有 master 故障时的主备切换，实现高可用的。
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Redis最重要的数据结构之一，双向链表结构，即可以支持反向查找和遍历，更方便操作，不过带来了部分额外的内存开销。
-
-- 常用命令
+- Hash slot算法
 
 ```python
-1.左阻塞取值（如果列表没有元素会阻塞列表直到等待超时或发现可弹出元素为止，下同）：
-BLPOP key1 [key2] timeout
-2.右阻塞取值：BRPOP key1 [key2] timeout
-3.左/右非阻塞取值（最后一个元素）：LPOP/RPOP key
-4.左/右新增值：LPUSH/RPUSH key value1 [value2]
-5.获取指定范围内的元素：LRANGE key start stop
+hash slot = CRC16(key) % 16384
 ```
 
-- 使用场景
-	- 消息队列：基于`lpop`和`rpush`（或者反过来，`lpush`和`rpop`）能实现队列的功能。
-	- 排行榜（只适合定时计算排行榜）：`lrange`命令可以分页查看队列中的数据，可将每隔一段时间计算一次的排行榜存储在list类型中，如每日的手机销量排行、学校月考学生的成绩排名等。
-	- 最新列表：`lpush`和`lrange`能实现最新列表的功能，每次通过lpush命令往列表里插入新的元素，然后通过lrange命令读取最新的元素列表，如朋友圈的点赞列表、评论列表。**对于频繁更新的列表不适合**。
+> 集群中，每个 master 都会持有部分 slot，增加一个 master，就将其他 master 的 hash slot 移动部分过去，减少一个 master，就将它的 hash slot 移动到其他 master 上去；并且移动 hash slot 的成本是非常低的。
+> 
+> 对指定的数据，可以让他们走同一个 hash slot ，通过 hash tag 来实现。
+> 
+> 客户端向节点发送键命令，节点要计算这个键属于哪个槽。如果是自己负责这个槽，那么直接执行命令，如果不是，向客户端返回一个 ***MOVED*** 错误，指引客户端转向正确的节点。
 
-***&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;那么问题来了，对于`排行榜`和`最新列表`两种应用场景，list类型能做到的sorted set类型都能做到，list类型做不到的sorted set类型也能做到，那为什么还要使用list类型去实现排行榜或最新列表呢，直接用sorted set类型不是更好吗？原因是sorted set类型占用的内存容量是list类型的`数倍之多`，对于列表数量不多的情况，可以用sorted set类型来实现***
+- gossip通信协议
 
-#### Set
+> **内容**：故障信息、节点的增加和移除、hash slot信息等
+>
+> 特点：集群元数据的更新比较分散，不集中在一个节点，更新请求陆陆续续，打到所有节点上去更新，有一定的延时，降低了压力; 这可能导致集群的一些操作会有一些滞后。
+> 
+> **原理**：<br>
+>> meet：某个节点发送 meet 给新加入的节点，让其加入集群，然后新节点就会开始与其他节点进行通信 
+>> 
+>> ping：每个节点都会频繁给其他 **节点、集群** 发送ping，告知**自己状态**、**维护的集群元数据**，并 **更新、交换** 集群元数据等 <br>
+>> 
+>>> 频率：10次/s，每次会选择5个最久没有通信的其他节点；<br>
+>>> 如果发现与某个节点通信延时达到了 ***`cluster_node_timeout / 2`***，那么立即发送 ping，避免出现严重的元数据不一致；<br>
+>>> 每次ping，一个是带上自己节点的信息，还有就是带上 1/10 （即 [3, N-2]）其他节点的信息。
+>>
+>> pong：返回 ping 和 meet，包含自己的状态和其他信息，也可以用于信息广播和更新
+>> 
+>> fail：某个节点判断另一个节点fail之后，就发送fail给其他节点，通知其他节点，指定的节点宕机了
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;与List类似，但他支持自动排重，同时也提供了判断某个成员是否在一个set集合内的重要接口。
+- 请求重定向
 
-- 常用命令
+> 客户端可能会挑选 **任意** 一个 Redis 实例去发送命令，接收到命令后会计算 key 对应的 hash slot，如果在本地就在本地处理，否则返回 moved 给客户端，让客户端进行重定向；
+> 
+> 节点间通过gossip协议进行数据交换，就知道每个 hash slot 在哪个节点上。
 
-```python
-sadd,spop,smembers,sunion
-1.向key中放入元素：SADD key member1 [member2]
-2.移除并返回集合中的一个随机元素：SPOP key
-3.返回集合中的所有成员：SMEMBERS key
-4.返回所有给定集合的并集：SUNION key1 [key2]
-5.返回给定所有集合的差集：SDIFF key1 [key2]
-```
+- 高可用性与主备切换
 
-- 使用场景
-	- 好友/关注/粉丝/感兴趣的人集合
-	
-	```
-	1.sinter命令可以获得A和B两个用户的共同好友
-	2.sismember命令可以判断A是否是B的好友
-	3.scard命令可以获取好友数量
-	4.关注时，smove命令可以将B从A的粉丝集合转移到A的好友集合
-	
-	需要注意的是，如果你用的是Redis Cluster集群，对于sinter、smove这种操作多个key的命令，要求这两个key必须存储在同一个slot（槽位）中，否则会报出 (error) CROSSSLOT Keys in request don't hash to the same slot 错误。Redis Cluster一共有16384个slot，每个key都是通过哈希算法CRC16(key)获取数值哈希，再模16384来定位slot的。要使得两个key处于同一slot，除了两个key一模一样，还有没有别的方法呢？答案是肯定的，Redis提供了一种Hash Tag的功能，在key中使用{}括起key中的一部分，在进行 CRC16(key) mod 16384 的过程中，只会对{}内的字符串计算，例如friend_set:{123456}和fans_set:{123456}，分别表示用户123456的好友集合和粉丝集合，在定位slot时，只对{}内的123456进行计算，所以这两个集合肯定是在同一个slot内的，当用户123456关注某个粉丝时，就可以通过smove命令将这个粉丝从用户123456的粉丝集合移动到好友集合。相比于通过srem命令先将这个粉丝从粉丝集合中删除，再通过sadd命令将这个粉丝加到好友集合，smove命令的优势是它是原子性的，不会出现这个粉丝从粉丝集合中被删除，却没有加到好友集合的情况。然而，对于通过sinter获取共同好友而言，Hash Tag则无能为力，例如，要用sinter去获取用户123456和456789两个用户的共同好友，除非我们将key定义为{friend_set}:123456和{friend_set}:456789，否则不能保证两个key会处于同一个slot，但是如果真这样做的话，所有用户的好友集合都会堆积在同一个slot中，数据分布会严重不均匀，不可取，所以，在实战中使用Redis Cluster时，sinter这个命令其实是不适合作用于两个不同用户对应的集合的（同理其它操作多个key的命令）。
-	
-	```
+> ***判断节点宕机***
+> 
+>> 主观宕机：一个节点认为另外一个节点宕机，***`cluster_state: pfail`***；<br>
+>> 客观宕机：多个节点都认为另外一个节点宕机，***`cluster_state: fail`***；<br>
+>> 在 cluster-node-timeout 内，某个节点一直没有返回 pong，***`cluster_state: pfail`***；<br>
+>> 如果一个节点认为某个节点 pfail 了，那么会在 gossip ping消息给其他节点，如果超过半数 `(N/2 + 1)` 的节点都认为 pfail 了，那么就会变成 fail。
+>
+> ***从节点过滤***
+> 
+>> 对宕机的 master node，从其所有的 slave node 中，选择一个切换成 master node；<br>
+>> 检查每个 slave node 与 master node 断开连接的时间，如果超过了 ***`cluster-node-timeout * cluster-slave-validity-factor`***，那么就没有资格切换成 master。
+>
+> ***从节点选举***
+> 
+>> **排序**：每个从节点，都根据自己对 master 复制数据的 offset，来设置一个选举时间，offset 越大 ***（复制数据越多）*** 的从节点，选举时间越靠前，优先进行选举（slave priority）；
+>> 
+>> **选举**：所有 ***master node*** 开始 slave 选举投票，如果大部分 master node `(N/2 + 1)` 都投票给了某个从节点，那么选举通过；
+>> 
+>> **换主**：从节点执行主备切换。
 
-	- 随机展示：如首页随机展示等，基于`srandmember`命令则可以从中随机获取几个。
-	- 黑名单/白名单：如用户黑名单、ip黑名单、设备黑名单等，`sismember`命令可用于判断用户、ip、设备是否处于黑名单之中。
+## Redis sentinal
 
-#### SortedSet
+- 概念
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Set不是自动有序的，而sorted set可以通过用户额外提供一个优先级(score)的参数来为成员实现自动排序。
+> 哨兵是一个独立的进程，其原理是哨兵通过发送命令，等待Redis服务器响应，**包括主服务器和从服务器**，从而监控运行的多个Redis实例的运行状态（哨兵之间也会相互监控）；
 
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;内部使用 `dict字典` 和 `跳跃表(SkipList)` 来保证数据的存储和有序，dict里放的是成员到score的映射，而跳跃表里存放的是所有的成员，排序依据是HashMap里存的score,使用跳跃表的结构可以获得比较高的查找效率，并且在实现上比较简单。
+- 功能
 
->Redis有序列表有压缩列表ziplist（内存连续的特殊双向链表）和跳表skiplist两种实现方式，通过encoding识别，当数据项数目小于zset\_max\_ziplist\_entries(默认为128)，且保存的所有元素长度不超过zset\_max\_ziplist\_value(默认为64)时，则用ziplist实现有序集合，否则使用zset结构，zset底层使用skiplist跳表和dict字典。
-
-- 常用命令
-
-```python
-1.向有序集合添加一个或多个成员，或者更新已存在成员的分数：ZADD key score1 member1 [score2 member2]
-2.获取有序集合的成员数：ZCARD key
-3.通过索引区间返回有序集合指定区间内的成员：ZRANGE key start stop [WITHSCORES]
-4.移除有序集合中的一个或多个成员：ZREM key member [member ...]
-5.返回有序集合中指定成员的索引：ZRANK key member
-```
-
-- 使用场景
-	- 排行榜：如游戏排名、微博热点话题等。
-	- 构造延迟队列
-	- 最新列表
-
-
-## 二、高级数据类型
-
-#### HyperLogLog
-
-#### Geo
-
-#### Pub/Sub
-
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;字面上理解就是发布（Publish）与订阅（Subscribe），在Redis中，你可以设定对某一个key值进行消息发布及消息订阅，当一个key值上进行了消息发布后，所有订阅它的客户端都会收到相应的消息。
-
-- 使用方式
-
-- 使用场景
-
-	- 用作实时消息系统，比如普通的即时聊天，群聊等功能；
-
-	
-#### Transactions
-
->&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;虽然Redis的Transactions提供的并不是严格的ACID的事务（比如一串用EXEC提交执行的命令，在执行中服务器宕机，那么会有一部分命令执行了，剩下的没执行），但是这个Transactions还是提供了基本的命令打包执行的功能（在服务器不出问题的情况下，可以保证一连串的命令是顺序在一起执行的，中间有会有其它客户端命令插进来执行）。Redis还提供了一个Watch功能，你可以对一个key进行Watch，然后再执行Transactions，在这过程中，如果这个Watched的值进行了修改，那么这个Transactions会发现并拒绝执行。
-
-
-## 三、缓存问题
-
-
-## 四、单线程&高并发
-
-
-
-## 五、淘汰&过期
-
-## 七、持久化
-
-## 八、哨兵&集群&分片
-
-
-## 九、应用设计
-
-### 分布式锁
-
-### 消息队列
-
-
-### 延迟队列
-
-### 
+> a. 监控(Monitoring)
+> 
+>> 哨兵(sentinel) 会不断地检查你的Master和Slave是否运作正常
+>
+> b. 提醒(Notification)
+> 
+>> 当被监控的某个 Redis出现问题时, 哨兵(sentinel) 可以通过 API 向管理员或者其他应用程序发送通知
+>
+> c. 自动故障切换（Automatic failover）
+> 
+>> **主观下线（S_DOWN）**：假设主服务器宕机，哨兵1先检测到这个结果，系统并不会马上进行failover过程，仅仅是哨兵1主观的认为主服务器不可用；
+>>
+>> **客观下线（O_DOWN）**：当后面的哨兵也检测到主服务器不可用，并且数量达到一定值时，那么哨兵之间就会进行一次 *投票*，投票的结果由一个哨兵发起，进行failover操作。切换成功后，就会通过 *发布订阅模式*，让各个哨兵把自己监控的从服务器实现切换主机。
+>> 
+>>> ***选举（vote）*** 选点的依据依次是（序号越大，被选的可能性越大）：
+>>> 
+>>> 1. 网络连接正常
+>>> 2. 5秒内回复过INFO命令：最近一次应答ping 时间不超过5倍ping间隔（默认1秒）
+>>> 3. 10*down-after-milliseconds 内与主连接过的
+>>> 4. 从服务器优先级 slave_priority `较低的`
+>>> 5. 复制偏移量 offset `较大的`
+>>> 6. runid `较小的`
+>>> 
+>>>> slave_priority：这个是在配置文件中指定，默认配置为100；<br>
+>>>> replication offset：每个slave在与master同步后offset自动增；<br>
+>>>> runid：每个redis实例，都会有一个runid,通常是一个40位的随机字符串,在redis启动时设置，重复概率非常小
+>> 
+>> 当客户端试图连接失效的 Master 时,集群也会向客户端返回新 Master 的地址，使得集群可以使用Master代替失效Master。
