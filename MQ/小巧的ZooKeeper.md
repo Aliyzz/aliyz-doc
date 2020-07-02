@@ -129,7 +129,7 @@ return ((newEpoch > curEpoch)
 - ZAB 状态流转
 
 > 1. 服务在启动或者和 leader 失联之后服务状态转为 LOOKING；<br>
-> 2. 如果 leader 不存在选举 leader，如果存在直接连接 leader，此时 zab 协议状态为**`ELECTION`**；<br>
+> 2. 如果 leader 不存在选举 leader，如果存在直接连接 leader，此时 zab 协议状态为 **`ELECTION`**；<br>
 > 3. 如果有超过半数的投票选择同一台 server，则 leader 选举结束，被选举为 leader 的server 服务状态为 LEADING，其他 server 服务状态为 FOLLOWING/OBSERVING；<br>
 > 4. 所有 server 连接上 leader，此时 zab 协议状态为 **`DISCOVERY`**；<br>
 > 5. leader 同步数据给其他从节点，使各个从节点数据和 leader 保持一致，此时 zab 协议状态为 **`SYNCHRONIZATION`**；<br>
