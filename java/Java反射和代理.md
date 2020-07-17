@@ -109,6 +109,53 @@
 
 #### 代理原理（待补充）
 
+- 看看 最终代理对象（$Proxy0）结构
+ 
+```java
+final class $Proxy0 extends Proxy implements ISubject {
+	private static Method m0;
+	private static Method m1;
+	private static Method m2;
+	private static Method m3; // 我们的方法，比如是 ISubject.save() 方法
+	// ... （还有其他 ISubject 申明的方法）
+	
+	public $Proxy0(InvocationHandler var1) throws  {
+        super(var1);
+   }
+   
+   /**
+    * 
+    */
+   public final void save() throws  {
+        try {
+            super.h.invoke(this, m3, (Object[])null);
+        } catch (RuntimeException | Error var2) {
+            throw var2;
+        } catch (Throwable var3) {
+            throw new UndeclaredThrowableException(var3);
+        }
+   }
+   
+   static {
+        try {
+          m0 = Class.forName("java.lang.Object").getMethod("hashCode");
+          m1 = Class.forName("java.lang.Object").getMethod("equals", Class.forName("java.lang.Object"));
+          m2 = Class.forName("java.lang.Object").getMethod("toString");
+          
+          // 接口方法
+          m3 = Class.forName("com.dynamic.Subject").getMethod("save");
+          
+        } catch (NoSuchMethodException var2) {
+            throw new NoSuchMethodError(var2.getMessage());
+        } catch (ClassNotFoundException var3) {
+            throw new NoClassDefFoundError(var3.getMessage());
+        }
+    }
+
+}
+```
+
+
 https://blog.csdn.net/OnlyloveCuracao/article/details/104889478
 
 ## CGLib 动态代理
